@@ -2,6 +2,9 @@
 # Path to https://github.com/SirSykon/object_detection repository
 OBJECT_DETECTION_REPOSITORY_FOLDER: "../object_detection/"
 
+#Path to https://github.com/SirSykon/pytracker
+PYTRACKER_REPOSITORY_FOLDER: "../pytracker/"
+
 INPUT_FOLDER: "./input"
 FRONT_VIDEO_NAME: "FILE210906-200117F.TS"
 BACK_VIDEO_NAME: "FILE210906-200117R.TS"
