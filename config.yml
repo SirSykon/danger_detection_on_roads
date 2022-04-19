@@ -20,3 +20,8 @@ BACKEND: "torch"
 MODEL: "yolo"
 MODEL_ORIGIN: "default"
 TRANSFORMATIONS: ["None"]
+
+# Tracker configuration information.
+MAXIMUM_DISTANCE_TO_ASSOCIATE: 50
+MAXIMUM_FRAMES_TO_SKIP: 5
+VALUE_TO_USE_AS_INF: 1000

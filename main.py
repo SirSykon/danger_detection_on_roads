@@ -1,3 +1,8 @@
+"""
+Author: Jorge García <jrggcgz@gmail.com>
+
+
+"""
 import yaml
 import sys
 import os
@@ -16,118 +21,8 @@ sys.path.insert(0, config["PYTRACKER_REPOSITORY_FOLDER"])
 
 import object_detection.utils.read_utils as read_utils
 from object_detection.object_detectors.object_detector import Object_Detector
-from object_detection.print_utils import print_utils
-from pytracker.tracker import Tracker
+from register import Camera_Information_Register
 
-def get_positions_from_bboxes(list_of_bbox:List[List[int]], position_process:str="average") -> List[int]:
-    """
-    list_of_bbox:List[List[int]] -> Each bbox is assumed as [x,y,width,height] with corners (left-right, top-bottom) [x,y], [x+width,y], [x,y+height] and [x+width,y+height].
-    position_process:str -> Way to process the information to get the position. Options are "average". Default "average".
-    """
-    list_of_positions = []
-    for bbox in list_of_bbox:
-        [x,y,width,height] = bbox
-        if position_process == "average":
-            list_of_positions.append([x+width//2,y+height//2])
-
-    return list_of_positions
-
-def ensure_color_assigntment(tracks_ids:List[int], colors:Dict[int,List[int]]) -> Dict[int,List[int]]:
-    """
-    Function to ensure each track id has an asssociated color. Otherwise, we generate a random color.
-    tracks_ids:List[int] -> List of tracks ids.
-    
-    """
-    if colors is None:
-        colors = {}
-
-    for id in tracks_ids:
-        if not id in colors.keys():
-            colors[id] = print_utils.get_random_color()
-
-    return colors
-
-def get_area_from_bbox(bbox:List[int])->int:
-    """
-    Function to get a bbox and return the number of pixels it contains.
-    bbox:List[int] -> bbox must have a shape [x,y, width, height].
-    """
-    area = bbox[2]*bbox[3]
-    return area
-
-def get_center_from_bbox(bbox:List[int])->int:
-    """
-    Function to get a bbox and return its center.
-    bbox:List[int] -> bbox must have a shape [x,y, width, height].
-    """
-    [x,y, width, height] = bbox
-    center = (x+width/2, y+height/2)
-    return center
-
-def process_image(rgb_frame:np.ndarray, tracker:Tracker, information_dict:Dict[int,List[Tuple[int,int,int]]], colors_dict:Dict[int,List[int]], print_debug_info = config["PRINT_DEBUG_INFO"]) -> None:
-
-    output = object_detector.process_single_image(rgb_frame)
-
-    bboxes = output[0]
-    classes = output[1]
-    confidences = output[2]
-    
-    if print_debug_info:
-        for bbox, _class, confidence in zip(bboxes, classes, confidences):        
-            print("Bounding Box")
-            print(bbox)
-            print("Class")
-            print(_class)
-            print("Confidence")
-            print(confidence)
-
-    # We get positions in order to get track ids.
-    positions = get_positions_from_bboxes(bboxes)
-    track_ids = tracker.assign_incomming_positions(np.array(positions))
-
-    infos = []
-    for track_id, bbox in zip(track_ids,bboxes):
-        area = get_area_from_bbox(bbox)
-        center = get_center_from_bbox(bbox)
-        info = (center[0], center[1], area)
-        infos.append(str(info))
-        if not track_id in information_dict.keys():
-            information_dict[track_id] = []
-        register = information_dict[track_id]
-        register.append(info)
-        information_dict[track_id] = register
-
-    if print_debug_info:
-        print("Track ids")
-        print(track_ids)
-    colors_dict = ensure_color_assigntment(track_ids, colors_dict)
-
-    drawn_image = print_utils.print_detections_on_image(output, rgb_frame[:,:,[2,1,0]])
-
-    if print_debug_info:
-        print("Colors dict")
-        print(colors_dict)
-
-    drawn_image = print_utils.print_points_on_image(positions, drawn_image, colors=[colors_dict[x] for x in track_ids])
-    drawn_image = print_utils.print_info_on_image(infos, positions, drawn_image, colors=[colors_dict[x] for x in track_ids])
-
-    return drawn_image, tracker, information_dict, colors_dict
-
-def plot_tuple_sequence(tuple_sequence:List[Tuple[int,int,int]], prediction_sequence:np.ndarray, plot_name:str, color:List[int]=[128.,128.,128.]) -> None:
-    sequence_length = len(tuple_sequence)
-    numpy_sequence = np.array(tuple_sequence)
-    prediction_length = prediction_sequence.shape[0]
-    fig, (ax1, ax2, ax3) = plt.subplots(1,3)
-    fig.suptitle(plot_name)
-    ax1.plot(range(sequence_length), numpy_sequence[:,0], c=color)
-    ax2.plot(range(sequence_length), numpy_sequence[:,1], c=color)
-    ax3.plot(range(sequence_length), numpy_sequence[:,2], c=color)
-
-    ax1.plot(range(sequence_length,sequence_length+prediction_length), prediction_sequence[:,0], c='r')
-    ax2.plot(range(sequence_length,sequence_length+prediction_length), prediction_sequence[:,1], c='r')
-    ax3.plot(range(sequence_length,sequence_length+prediction_length), prediction_sequence[:,2], c='r')
-
-    return fig
 
 def analyze_information_tuple_sequence(tuple_sequence:List[Tuple[int,int,int]], fps:int, prediction_time_range:int = 3, output_graph_name:str = None) -> None:
     """
@@ -167,15 +62,10 @@ back_video_gen = read_utils.generator_from_video(back_video_file_path)
 object_detector = Object_Detector(config["BACKEND"], config["MODEL"], config["TRANSFORMATIONS"],config["MODEL_ORIGIN"])
 print(f"Loaded object detection model.")
 
-# Tracker initialization.
-front_tracker = Tracker(50,5,1000)
-back_tracker = Tracker(50,5,1000)
+front_camera_register = Camera_Information_Register(config, object_detector)
+back_camera_register = Camera_Information_Register(config, object_detector)
 
 # Data initialization.
-front_information_dict = {}     # Dictionary with front information.
-back_information_dict = {}      # Dictionary with back information.
-front_colors_dict = None        # Dictionary with front colors to plot.
-back_colors_dict = None         # Dictionary with back colors to plot.
 back_out = None                 # Back output video.
 front_out = None                # Front input video.
 
@@ -185,10 +75,10 @@ for index, (front_frame, back_frame) in enumerate(zip(front_video_gen, back_vide
     rgb_front_frame = front_frame[:,:,[2,1,0]]  
     rgb_back_frame = back_frame[:,:,[2,1,0]]
 
-    front_drawn_image, front_tracker, front_information_dict, front_colors_dict = process_image(rgb_front_frame, front_tracker, front_information_dict, front_colors_dict)
+    front_drawn_image = front_camera_register.process_image(rgb_front_frame)
     analyze_information_dict(front_information_dict, index, 30, 3, output_analysis_folder = output_analysis_folder_back)
 
-    back_drawn_image, back_tracker, back_information_dict, back_colors_dict = process_image(rgb_back_frame, back_tracker, back_information_dict, back_colors_dict)
+    back_drawn_image = front_camera_register.process_image(rgb_back_frame)
     analyze_information_dict(front_information_dict, index, 30, 3, output_analysis_folder = output_analysis_folder_front)
 
     if config["SAVE_OUTPUT_VIDEO"] and back_out is None:
