@@ -45,7 +45,6 @@ object_detector = Object_Detector(config["BACKEND"], config["MODEL"], config["TR
 print(f"Loaded object detection model.")
 
 camera_register = Register(config, object_detector, output_folder)
-
 # Data initialization.
 out_video = None                # Output video.
 
@@ -73,6 +72,7 @@ for index, frame in enumerate(video_gen):
 
 camera_register.plot_information(output_images_folder, track_length_to_print = config["TRACK_LENGTH_TO_CALCULATE_DANGER"])
 danger_values = camera_register.get_all_danger_values()
+print(danger_values)
 np.save(output_danger_values_file, danger_values)
 
 if config["SAVE_OUTPUT_VIDEO"]:

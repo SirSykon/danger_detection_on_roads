@@ -40,6 +40,7 @@ class Camera_Information_Register:
         self.print_debug_info = config["PRINT_DEBUG_INFO"]
         self.fps = config["FPS"]
         self.output_folder = output_folder
+        self.main_output_folder = config["OUTPUT_FOLDER"]
         print("Register Initialized.")
 
     def save_information(self, track_id:int, bbox:List[int], class_:int, confidence:float, time:int, image:np.ndarray) -> None:
@@ -145,7 +146,7 @@ class Camera_Information_Register:
             drawn_image = print_utils.print_detections_on_image(output, rgb_frame[:,:,[2,1,0]])
 
             drawn_image = print_utils.print_points_on_image(positions, drawn_image, colors=[self.colors[x] for x in track_ids])
-            drawn_image = print_utils.print_info_on_image(infos, positions, drawn_image, colors=[self.colors[x] for x in track_ids])
+            drawn_image = print_utils.print_info_on_image([str(t_id) for t_id in track_ids], positions, drawn_image, colors=[self.colors[x] for x in track_ids])
 
             return drawn_image
 

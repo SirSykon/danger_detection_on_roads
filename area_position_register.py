@@ -6,6 +6,7 @@ Author: Jorge García <jrggcgz@gmail.com>
 import cv2
 import math
 import os
+import random
 import numpy as np
 from typing import List, Dict, Tuple
 from register import Camera_Information_Register
@@ -26,15 +27,23 @@ class Area_Position_Register(Camera_Information_Register):
         output_folder:str -> Folder to save outputs.
         """
 
-        self.values_to_calculate_danger = config["TRACK_LENGTH_TO_CALCULATE_DANGER"]
+        self.values_to_calculate_danger = config["VALUES_TO_CALCULATE_DANGER"]
+        self.track_length_to_calculate_danger = config["TRACK_LENGTH_TO_CALCULATE_DANGER"]
         self.danger_mode = config["DANGER_MODE"]
         self.relevance_threshold = config["RELEVANCE_THRESHOLD"]
         self.relevant_only = config["RELEVANCE_FILTER"]
         self.all_danger_values = []
+        self.videos_to_get_danger_threshold = config["VIDEOS_TO_GET_DANGER_THRESHOLD"]
+        self.percentile_to_get_danger_threshold = config["THRESHOLD_PERCENTILE"]
+        self.explicit_threshold = config["EXPLICIT_THRESHOLD"]
+        self.number_of_skipped_prints_when_plotting_history_on_images = config["NUMBER_OF_SKIPPED_PRINTS_WWHEN_PLOTTING_HISTORY_ON_IMAGES"]
         if self.danger_mode == "ransac":
             self.residual_threshold = config["RANSAC_RESIDUAL_THRESHOLD"]
         
         super().__init__(config, object_detector, output_folder)
+
+        self.danger_threshold = self.get_danger_threshold()
+        print(f"Danger Threshold: {self.danger_threshold}")
 
     def calculate_danger(self,values_in:np.ndarray, times:np.ndarray):
         """
@@ -54,6 +63,22 @@ class Area_Position_Register(Camera_Information_Register):
 
             slope = (y_pred[1]-y_pred[0])/(1-0)
         return slope
+
+    def get_danger_threshold(self):
+        """
+        Method to get danger threshold.
+        """
+
+        if not self.videos_to_get_danger_threshold is None:
+            all_video_danger_data = []
+            for video_name in self.videos_to_get_danger_threshold:
+                video_danger_data = np.load(os.path.join(self.main_output_folder, video_name, "danger_values.npy"))
+                all_video_danger_data.append(video_danger_data)
+
+            print(all_video_danger_data)
+            return np.percentile(np.array(all_video_danger_data), self.percentile_to_get_danger_threshold)
+        else:
+            return self.explicit_threshold
 
     def turn_to_line(self, values:np.ndarray):
         """
@@ -82,7 +107,7 @@ class Area_Position_Register(Camera_Information_Register):
 
         area = get_area_from_bbox(bbox)
         center = get_center_from_bbox(bbox)
-        info = [bbox[0], bbox[1], bbox[2], bbox[3], center[0], center[1], area/(image.shape[0]*image.shape[1]), time, class_, confidence, -1]
+        info = [bbox[0], bbox[1], bbox[2], bbox[3], center[0], center[1], area/(image.shape[0]*image.shape[1]), time, class_, confidence, -1, -1]
 
         get_danger = True
         if not track_id in self.information.keys():
@@ -90,10 +115,13 @@ class Area_Position_Register(Camera_Information_Register):
         track_id_register = self.information[track_id]
         track_id_register.append(info)
 
-        if len(track_id_register) >= self.values_to_calculate_danger:
+        if len(track_id_register) >= self.track_length_to_calculate_danger:
             track_id_register_np = np.array(track_id_register)
             danger_value = self.calculate_danger(track_id_register_np[:,6], track_id_register_np[:,7])
-            track_id_register[-1][-1] = danger_value
+            track_id_register[-1][-2] = danger_value
+            dangerous = abs(danger_value) > abs(self.danger_threshold)
+            print(dangerous)
+            track_id_register[-1][-1] = dangerous
             self.all_danger_values.append(danger_value)
         self.information[track_id] = track_id_register
 
@@ -111,17 +139,25 @@ class Area_Position_Register(Camera_Information_Register):
         relevant_only:bool -> Do we plot all tracks with enough information or do we filter them by relevant using self.relevant()? Default False.
         """
 
-        bboxs = information[0]
-        centers = information[1]
+
         information_np = np.array(information)
         sequence_times = information_np[:,7]
+        dangerous = information_np[self.track_length_to_calculate_danger:,11] == 1
         if not self.relevant_only or self.is_relevant(information_np[:,6]):
+
+            plt.clf()
+            fig, ax1 = plt.subplots()
+            ax1.scatter(sequence_times, information_np[:,6], color="yellowgreen")
+            ax1.set_ylabel("Area")
+            ax1.set_xlabel("Time")
+            plt.savefig(f"{output}/{track_id}_orig.jpg",bbox_inches='tight')
+
 
             line_information = self.turn_to_line(information_np[:,6])
             plt.clf()
-            print(track_id)
-            print(np.array(information)[:,8])
-            print(np.array(information)[:,7])
+            #print(track_id)
+            #print(np.array(information)[:,8])
+            #print(np.array(information)[:,7])
             fig, ax1 = plt.subplots()
             ax2 = ax1.twinx()
 
@@ -133,18 +169,55 @@ class Area_Position_Register(Camera_Information_Register):
 
                 ax1.scatter(sequence_times[inlier_mask], line_information[inlier_mask], color="yellowgreen", label= "Inliers")
                 ax1.scatter(sequence_times[outlier_mask], line_information[outlier_mask], color="gold", label="Outliers")
-                ax2.scatter(sequence_times[self.values_to_calculate_danger:], information_np[self.values_to_calculate_danger:,10], c='r')
+                
                 ax1.plot(sequence_times, ransac.predict(sequence_times.reshape(-1,1)), color='g', linewidth=2)
 
             if self.danger_mode == "linear_regression":
                 ax1.scatter(sequence_times, line_information)
-                ax2.scatter(sequence_times[self.values_to_calculate_danger:], information_np[self.values_to_calculate_danger:,10], c='r')
 
                 reg = LinearRegression().fit(sequence_times.reshape(-1,1), line_information)
                 
                 ax1.plot(sequence_times, reg.predict(sequence_times.reshape(-1,1)), color='g', linewidth=2)
 
-            plt.savefig(f"{output}/{track_id}.jpg")
+            ax1.set_ylabel(r"$\frac{1}{\delta}$", rotation=0, fontsize=20)
+            ax1.set_xlabel("Time")
+
+            danger_calculation_time_zone_sequence_times = sequence_times[self.track_length_to_calculate_danger:]
+            danger_calculation_time_zone_danger = information_np[self.track_length_to_calculate_danger:,10]
+            #ax2.plot(sequence_times, sequence_times.shape[0]*[self.danger_threshold], c='r')
+            ax2.plot(sequence_times, sequence_times.shape[0]*[-1*self.danger_threshold], c='r')
+            ax2.scatter(danger_calculation_time_zone_sequence_times[dangerous], danger_calculation_time_zone_danger[dangerous], c='r', marker='x', label="Dangerous")
+            ax2.scatter(danger_calculation_time_zone_sequence_times[np.logical_not(dangerous)], danger_calculation_time_zone_danger[np.logical_not(dangerous)], c='r', marker='o', label="Non Dangerous")
+            ax2.set_ylabel("Estimated Relative Speed")
+            ax2.legend()
+            plt.savefig(f"{output}/{track_id}_with_danger.jpg",bbox_inches='tight')
+
+            plt.clf()
+            fig, ax1 = plt.subplots()
+            if self.danger_mode == "ransac":
+
+                ransac = RANSACRegressor(residual_threshold = self.residual_threshold).fit(sequence_times.reshape(-1,1), line_information)
+                inlier_mask = ransac.inlier_mask_
+                outlier_mask = np.logical_not(inlier_mask)
+
+                ax1.scatter(sequence_times[inlier_mask], line_information[inlier_mask], color="yellowgreen", label= "Inliers")
+                ax1.scatter(sequence_times[outlier_mask], line_information[outlier_mask], color="gold", label="Outliers")
+                
+                ax1.plot(sequence_times, ransac.predict(sequence_times.reshape(-1,1)), color='g', linewidth=2)
+
+            if self.danger_mode == "linear_regression":
+                ax1.scatter(sequence_times, line_information)
+
+                reg = LinearRegression().fit(sequence_times.reshape(-1,1), line_information)
+                
+                ax1.plot(sequence_times, reg.predict(sequence_times.reshape(-1,1)), color='g', linewidth=2)
+
+            ax1.set_ylabel(r"$\frac{1}{\delta}$", rotation=0, fontsize=20)
+            ax1.set_xlabel("Time")
+
+            ax1.legend()
+            plt.savefig(f"{output}/{track_id}.jpg",bbox_inches='tight')
+
 
     def plot_history_on_image(self, track_id:int, rgb_frame:np.ndarray, output_folder:str):
         """
@@ -153,17 +226,23 @@ class Area_Position_Register(Camera_Information_Register):
         rgb_frame:np.ndarray -> RGB image as numpy matrix.
         output:str -> Folder to save plots in.
         """
-
+        random
         if not os.path.isdir(output_folder):
             os.makedirs(output_folder)
 
         drawn_image = rgb_frame[:,:,[2,1,0]].copy()
         history_information = self.information[track_id]
-        for info in history_information:
-            [x, y, width, height, _, _, area, time, class_, confidence, danger] = info
+        count = 0
+        len_history = len(history_information)
+        for info_index, info in enumerate(history_information):
+            [x, y, width, height, _, _, area, time, class_, confidence, danger, dangerous] = info
             color = self.colors[track_id]
-            drawn_image = cv2.rectangle(drawn_image, (x,y), (x+width, y+height), (int(color[0]),int(color[1]),int(color[2])), 2)
-        cv2.imwrite(f"{output_folder}/{track_id}.jpg", drawn_image)
+            if count == 0 or info_index==len_history-1:
+                drawn_image = cv2.rectangle(drawn_image, (x,y), (x+width, y+height), (int(color[0]),int(color[1]),int(color[2])), 2)
+            count+=1
+            if count == self.number_of_skipped_prints_when_plotting_history_on_images:
+                count = 0    
+        cv2.imwrite(f"{output_folder}/{track_id}_{random.randint(0,10000)}.jpg", drawn_image)
 
     def analyze_information_sequence(information_sequence:List[Tuple[int,int,int]], fps:int, prediction_time_range:int = 3, output_graph_name:str = None) -> None:
         """
